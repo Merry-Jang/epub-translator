@@ -124,10 +124,14 @@ def run_pipeline(
     """
     start_time = time.time()
 
-    # 웹 UI용 로그 핸들러 등록
+    # 웹 UI용 로그 핸들러 등록 (translate + src.* 하위 모듈 포함)
+    _handler_loggers = []
     if log_handler:
         log_handler.setLevel(logging.INFO)
-        logger.addHandler(log_handler)
+        for name in ("translate", "src"):
+            lg = logging.getLogger(name)
+            lg.addHandler(log_handler)
+            _handler_loggers.append(lg)
 
     try:
         _run_pipeline_inner(
@@ -136,7 +140,8 @@ def run_pipeline(
         )
     finally:
         if log_handler:
-            logger.removeHandler(log_handler)
+            for lg in _handler_loggers:
+                lg.removeHandler(log_handler)
 
 
 def _run_pipeline_inner(

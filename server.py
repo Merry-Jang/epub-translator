@@ -23,6 +23,7 @@ from task_manager import (
     create_task,
     get_all_tasks,
     get_task,
+    remove_task,
 )
 from translate import run_pipeline
 
@@ -81,15 +82,17 @@ async def _cleanup_loop():
                     to_remove.append(task_id)
 
         for task_id in to_remove:
-            task = tasks.pop(task_id, None)
+            task = remove_task(task_id)
             if task:
-                # 업로드 파일 삭제
-                if os.path.exists(task.input_path):
-                    try:
-                        os.unlink(task.input_path)
-                        logger.info("임시 업로드 파일 삭제: %s", task.input_path)
-                    except OSError as e:
-                        logger.warning("파일 삭제 실패: %s — %s", task.input_path, e)
+                # 업로드·출력·체크포인트 파일 삭제
+                for path_attr in ("input_path", "output_path", "checkpoint_path"):
+                    path = getattr(task, path_attr, None)
+                    if path and os.path.exists(path):
+                        try:
+                            os.unlink(path)
+                            logger.info("임시 파일 삭제: %s", path)
+                        except OSError as e:
+                            logger.warning("파일 삭제 실패: %s — %s", path, e)
 
         if to_remove:
             logger.info("클린업 완료: %d개 작업 제거", len(to_remove))
@@ -122,7 +125,7 @@ async def start_translation(
 
     input_path = os.path.join(UPLOAD_DIR, f"{task_id}_{safe_name}")
     output_path = os.path.join(OUTPUT_DIR, f"{task_id}_{stem}_kr.epub")  # [권장 #7]
-    checkpoint_path = os.path.join(CHECKPOINT_DIR, f"{stem}_progress.json")
+    checkpoint_path = os.path.join(CHECKPOINT_DIR, f"{task_id}_{stem}_progress.json")
 
     # 3. 파일 크기 제한 [필수 #2]
     content = await file.read()
@@ -155,11 +158,13 @@ async def start_translation(
         task.error_message = f"클라이언트 초기화 실패: {e}"
         raise HTTPException(400, task.error_message)
 
-    # 6. 로컬 서버 연결 확인
-    if provider == "local" and not client.check_connection():
-        task.status = TaskStatus.FAILED
-        task.error_message = "MLX-LM 서버에 연결할 수 없습니다."
-        raise HTTPException(503, task.error_message)
+    # 6. 로컬 서버 연결 확인 (동기 I/O를 to_thread로 래핑)
+    if provider == "local":
+        connected = await asyncio.to_thread(client.check_connection)
+        if not connected:
+            task.status = TaskStatus.FAILED
+            task.error_message = "MLX-LM 서버에 연결할 수 없습니다."
+            raise HTTPException(503, task.error_message)
 
     # 7. 체크포인트 존재 시 자동 resume
     if os.path.exists(checkpoint_path) and not resume:
@@ -311,9 +316,8 @@ async def download_result(task_id: str):
     )
 
 
-@app.get("/api/checkpoints")
-async def list_checkpoints():
-    """저장된 체크포인트 목록을 반환한다."""
+def _load_checkpoints_sync() -> list[dict]:
+    """체크포인트 파일 목록을 동기적으로 읽는다 (to_thread용)."""
     files = glob_mod.glob(os.path.join(CHECKPOINT_DIR, "*_progress.json"))
     result = []
 
@@ -335,6 +339,13 @@ async def list_checkpoints():
         except Exception:
             continue
 
+    return result
+
+
+@app.get("/api/checkpoints")
+async def list_checkpoints():
+    """저장된 체크포인트 목록을 반환한다."""
+    result = await asyncio.to_thread(_load_checkpoints_sync)
     return {"checkpoints": result}
 
 

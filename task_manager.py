@@ -87,8 +87,13 @@ def get_task(task_id: str) -> TaskInfo | None:
 
 
 def get_all_tasks() -> dict[str, TaskInfo]:
-    """전역 작업 딕셔너리 참조를 반환한다 (cleanup용)."""
-    return _tasks
+    """전역 작업 딕셔너리의 얕은 복사본을 반환한다."""
+    return dict(_tasks)
+
+
+def remove_task(task_id: str) -> TaskInfo | None:
+    """작업을 전역 저장소에서 제거하고 반환한다."""
+    return _tasks.pop(task_id, None)
 
 
 def cancel_task(task_id: str) -> bool:

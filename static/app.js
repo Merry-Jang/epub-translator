@@ -130,17 +130,18 @@ const App = (() => {
             });
 
             es.addEventListener('error', (e) => {
-                // 서버에서 보낸 error 이벤트
+                // 서버에서 보낸 error 이벤트 (e.data 존재)
                 if (e.data) {
                     const data = JSON.parse(e.data);
                     ui.showError(data.error || '알 수 없는 오류가 발생했습니다.');
+                    ui.setStatus('failed');
+                    es.close();
+                    state.eventSource = null;
                 }
-                ui.setStatus('failed');
-                es.close();
-                state.eventSource = null;
+                // e.data 없는 네트워크 에러는 onerror에서 처리 (재연결 카운터)
             });
 
-            // 네트워크 에러 (재연결 5회 제한) [선택 #11]
+            // 네트워크 에러 (재연결 카운트 기반 판단) [선택 #11]
             es.onerror = () => {
                 reconnectCount++;
                 if (reconnectCount > 5) {
@@ -149,6 +150,7 @@ const App = (() => {
                     ui.showError('서버 연결이 불안정합니다. 페이지를 새로고침하세요.');
                     ui.setStatus('failed');
                 }
+                // 5회 이하면 EventSource 자동 재연결에 맡김 (진행 중 번역 유지)
             };
         },
     };

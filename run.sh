@@ -16,4 +16,4 @@ echo "브라우저에서 http://localhost:8000 을 열어주세요."
 echo "(종료: Ctrl+C)"
 echo ""
 
-./venv/bin/python3 -m uvicorn server:app --host 0.0.0.0 --port 8000 --reload
+./venv/bin/python3 -m uvicorn server:app --host 127.0.0.1 --port 8000 --reload
