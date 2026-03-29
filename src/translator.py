@@ -58,7 +58,7 @@ def translate_chunk(
     model: str,
     temperature: float = 0.1,
     top_p: float = 0.3,
-    max_tokens: int = 4096,
+    max_tokens: int = 16384,
     max_retries: int = 3,
 ) -> str:
     """
@@ -112,19 +112,19 @@ def translate_chunk(
                 logger.warning("WARNING: Chunk %s response truncated (finish_reason=length)",
                                chunk.id)
 
-            result = result_obj.content
+            result = result_obj.content or ""
+
+            # <think> 태그 제거 먼저 (MLX-LM Qwen은 thinking 토큰이 content에 섞일 수 있음)
+            result = re.sub(r'<think>.*?</think>', '', result, flags=re.DOTALL).strip()
 
             # 빈 응답 처리
-            if not result or not result.strip():
+            if not result:
                 if attempt < max_retries - 1:
                     logger.warning("빈 응답 — 재시도 %d/%d: %s",
                                    attempt + 1, max_retries, chunk.id)
                     time.sleep(2 ** attempt)
                     continue
                 raise TranslationError(chunk.id, "빈 응답 반복", attempt + 1)
-
-            # <think> 태그 제거 (local Qwen /no_think 실패 방어)
-            result = re.sub(r'<think>.*?</think>', '', result, flags=re.DOTALL).strip()
 
             logger.debug("번역 완료: %s (attempt %d)", chunk.id, attempt + 1)
             return result
