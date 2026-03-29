@@ -4,6 +4,7 @@
 import argparse
 import logging
 import sys
+import threading
 import time
 from collections import defaultdict
 from datetime import datetime
@@ -109,6 +110,8 @@ def run_pipeline(
     resume: bool,
     max_words: int,
     client: LLMClient,
+    cancel_event: threading.Event | None = None,
+    log_handler: logging.Handler | None = None,
 ) -> None:
     """
     번역 파이프라인 메인 루프.
@@ -121,6 +124,33 @@ def run_pipeline(
     """
     start_time = time.time()
 
+    # 웹 UI용 로그 핸들러 등록
+    if log_handler:
+        log_handler.setLevel(logging.INFO)
+        logger.addHandler(log_handler)
+
+    try:
+        _run_pipeline_inner(
+            input_path, output_path, model, checkpoint_path,
+            resume, max_words, client, cancel_event, start_time,
+        )
+    finally:
+        if log_handler:
+            logger.removeHandler(log_handler)
+
+
+def _run_pipeline_inner(
+    input_path: str,
+    output_path: str,
+    model: str,
+    checkpoint_path: str,
+    resume: bool,
+    max_words: int,
+    client: LLMClient,
+    cancel_event: threading.Event | None,
+    start_time: float,
+) -> None:
+    """run_pipeline 내부 로직. log_handler 정리를 위해 분리."""
     # 출력 경로 안전성 확인 (리뷰 #7)
     out = Path(output_path)
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -199,6 +229,11 @@ def run_pipeline(
     pbar = tqdm(total=total_chunks, initial=completed, desc="번역 진행", unit="chunk")
 
     for chunk in all_chunks:
+        # 취소 신호 확인
+        if cancel_event and cancel_event.is_set():
+            logger.info("사용자 요청으로 번역이 취소되었습니다.")
+            break
+
         chunk_info = checkpoint_data["chunks"].get(chunk.id, {})
         status = chunk_info.get("status", "pending")
 
@@ -257,7 +292,11 @@ def run_pipeline(
 
     save_progress(checkpoint_path, checkpoint_data)
 
-    # 5. EPUB 빌드
+    # 5. EPUB 빌드 (취소 시 스킵)
+    if cancel_event and cancel_event.is_set():
+        logger.info("번역 취소됨 — EPUB 빌드를 건너뜁니다. 체크포인트는 저장되어 있습니다.")
+        return
+
     logger.info("EPUB 빌드 시작...")
     translated_chapters = _build_translated_chapters(checkpoint_data, all_chunks)
     build_epub(input_path, translated_chapters, output_path)

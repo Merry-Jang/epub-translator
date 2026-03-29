@@ -20,9 +20,9 @@
 | 0. 초기화 | Lead | ✅ done | 23:44 | 23:46 |
 | 1. 자료조사 | Researcher | ✅ done | 23:46 | 23:50 |
 | 2. 설계 | Designer | ✅ done | 23:50 | 23:56 |
-| 3. 설계 검토 | Reviewer | in_progress | 23:56 | - |
+| 3. 설계 검토 | Reviewer | ✅ done (수정5건→개발반영) | 23:56 | 00:01 |
 | 4. 사용자 승인 | - | skip (사용자 요청) | - | - |
-| 5. 개발 | Developer | pending | - | - |
+| 5. 개발 | Developer | in_progress | 00:01 | - |
 | 6. 코드 리뷰 | Reviewer | pending | - | - |
 | 7. 테스트 | Tester | pending | - | - |
 | 8. 완료 + PR | Lead | pending | - | - |

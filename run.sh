@@ -1,5 +1,5 @@
 #!/bin/bash
-# 킨들 번역기 — 실행 스크립트
+# EPUB Translator Studio — 실행 스크립트
 
 set -e
 
@@ -11,9 +11,9 @@ if [ ! -f "venv/bin/python3" ]; then
 fi
 
 echo ""
-echo "킨들 번역기 시작 중..."
-echo "브라우저에서 http://localhost:7860 이 자동으로 열립니다."
+echo "EPUB Translator Studio 시작 중..."
+echo "브라우저에서 http://localhost:8000 을 열어주세요."
 echo "(종료: Ctrl+C)"
 echo ""
 
-./venv/bin/python3 app.py "$@"
+./venv/bin/python3 -m uvicorn server:app --host 0.0.0.0 --port 8000 --reload
