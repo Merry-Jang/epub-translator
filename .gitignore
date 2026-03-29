@@ -1,0 +1,16 @@
+.env
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.log
+*.db
+*.epub
+*.mobi
+*.azw
+*.kfx
+dist/
+build/
+*.egg-info/
+.DS_Store
+checkpoints/
