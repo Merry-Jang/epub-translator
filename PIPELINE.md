@@ -24,5 +24,5 @@
 | 4. 사용자 승인 | - | skip (사용자 요청) | - | - |
 | 5. 개발 | Developer | ✅ done | 00:01 | 00:10 |
 | 6. 코드 리뷰 | Reviewer | ✅ done (5필수+3권장→반영) | 00:10 | 00:21 |
-| 7. 테스트 | Tester | in_progress | 00:21 | - |
-| 8. 완료 + PR | Lead | pending | - | - |
+| 7. 테스트 | Tester | ✅ done (132/132 pass) | 00:21 | 00:28 |
+| 8. 완료 + PR | Lead | ✅ done | 00:28 | 00:29 |
