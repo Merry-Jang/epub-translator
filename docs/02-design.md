@@ -299,14 +299,21 @@ def build_epub(
     처리:
     1. EbookLib으로 원본 EPUB 로드
     2. 각 챕터의 XHTML을 BeautifulSoup로 파싱
-    3. 블록 요소를 순서대로 순회하며 번역문으로 교체
+    3. 블록 요소를 순서대로 순회하며:
+       a. translated_chapters[chapter_id][block_index]가 존재하면 → 번역문으로 교체
+       b. 해당 block_index가 없으면 → 원문(영어) 그대로 유지 (fallback)
+       c. fallback 발생 시 WARNING 로그 출력:
+          "WARNING: Block {chapter_id}[{block_index}] not translated, keeping original"
     4. dc:language 메타데이터를 'ko'로 변경
     5. 이미지, CSS, 폰트 등 비텍스트 자원은 그대로 복사
     6. 새 EPUB 파일로 저장
+    7. 최종 통계 출력: 번역된 블록 수 / 전체 블록 수, fallback 블록 수
 
     Args:
         original_path: 원본 EPUB 파일 경로
         translated_chapters: {chapter_id: {block_index: translated_html}}
+                             실패/미번역 청크의 block_index는 포함되지 않음
+                             → 해당 블록은 원문 유지
         output_path: 출력 EPUB 파일 경로
     """
     ...
@@ -319,8 +326,12 @@ def save_progress(checkpoint_path: str, data: dict) -> None:
     """
     체크포인트 데이터를 atomic write로 저장한다.
 
-    Atomic write: tempfile에 먼저 쓴 후 os.replace()로 원자적 치환.
-    → 쓰기 중 크래시해도 기존 체크포인트가 손상되지 않음.
+    처리:
+    1. Path(checkpoint_path).parent.mkdir(parents=True, exist_ok=True)
+       → 체크포인트 디렉토리가 없으면 자동 생성
+    2. tempfile.NamedTemporaryFile으로 임시 파일에 JSON 쓰기
+    3. os.replace()로 원자적 치환
+       → 쓰기 중 크래시해도 기존 체크포인트가 손상되지 않음
 
     Args:
         checkpoint_path: 체크포인트 JSON 파일 경로
@@ -361,9 +372,56 @@ def run_pipeline(
     4. 각 chunk에 대해:
        a. 이미 완료된 청크면 스킵
        b. translate_chunk() 호출
-       c. 결과를 checkpoint에 저장
-       d. tqdm 진행률 업데이트
-    5. build_epub() → 출력 파일 생성
+       c. 번역 결과를 block_indices에 매핑 (아래 로직)
+       d. 결과를 checkpoint에 저장
+       e. tqdm 진행률 업데이트
+    5. _build_translated_chapters()로 translated_chapters 조립
+    6. build_epub() → 출력 파일 생성
+    """
+    ...
+
+
+def _map_translation_to_blocks(
+    translated_text: str,
+    chunk: Chunk,
+) -> dict[int, str]:
+    """
+    translate_chunk()의 문자열 반환값을 block_index → translated_text 매핑으로 변환한다.
+
+    로직:
+    1. translated_text를 '\\n\\n'으로 분할
+    2. 분할 개수가 chunk.block_indices 개수와 일치하면:
+       → 1:1 매핑 (block_indices[i] → parts[i])
+    3. 분할 개수가 불일치하면:
+       → 블록이 1개: 전체 텍스트를 해당 block_index에 배정
+       → 블록이 여러 개: 전체 텍스트를 첫 번째 block_index에 합치고,
+         나머지 block_index에는 빈 문자열 배정
+       → WARNING 로그 출력
+
+    Args:
+        translated_text: translate_chunk() 반환값
+        chunk: 원본 Chunk (block_indices 참조)
+    Returns:
+        {block_index: translated_html} 딕셔너리
+    """
+    ...
+
+
+def _build_translated_chapters(
+    chapters: list,
+    checkpoint_data: dict,
+    all_chunks: list,
+) -> dict[str, dict[int, str]]:
+    """
+    체크포인트의 완료된 청크들을 build_epub()이 요구하는 구조로 조립한다.
+
+    Returns:
+        {chapter_id: {block_index: translated_html}}
+
+    처리:
+    1. checkpoint_data["chunks"]에서 status=="done"인 항목만 수집
+    2. 각 청크의 translated 텍스트를 _map_translation_to_blocks()로 변환
+    3. chapter_id별로 병합
     """
     ...
 
