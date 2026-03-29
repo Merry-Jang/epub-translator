@@ -1,6 +1,7 @@
 """번역 모듈 — MLX-LM API 호출 + 재시도 로직."""
 
 import logging
+import re
 import time
 
 from openai import OpenAI
@@ -110,8 +111,11 @@ def translate_chunk(
                     continue
                 raise TranslationError(chunk.id, "빈 응답 반복", attempt + 1)
 
+            # <think> 태그 제거 (/no_think 실패 방어)
+            result = re.sub(r'<think>.*?</think>', '', result, flags=re.DOTALL).strip()
+
             logger.debug("번역 완료: %s (attempt %d)", chunk.id, attempt + 1)
-            return result.strip()
+            return result
 
         except TranslationError:
             raise
