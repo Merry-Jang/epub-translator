@@ -45,8 +45,8 @@ class TranslationError(Exception):
 
 def translate_chunk(
     chunk: Chunk,
+    client: OpenAI,
     model: str = "mlx-community/Qwen3.5-35B-A3B-4bit",
-    endpoint: str = "http://localhost:8080/v1",
     temperature: float = 0.1,
     top_p: float = 0.3,
     max_tokens: int = 4096,
@@ -66,8 +66,6 @@ def translate_chunk(
     Raises:
         TranslationError: 모든 재시도 실패 시
     """
-    client = OpenAI(base_url=endpoint, api_key="not-needed")
-
     # 프롬프트 조립
     context_block = ""
     if chunk.context:

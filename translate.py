@@ -13,6 +13,7 @@ from tqdm import tqdm
 
 from src.epub_parser import parse_epub
 from src.chunker import chunk_chapter
+from openai import OpenAI
 from src.translator import translate_chunk, TranslationError
 from src.checkpoint import save_progress, load_progress
 from src.epub_builder import build_epub
@@ -107,6 +108,7 @@ def run_pipeline(
     checkpoint_path: str,
     resume: bool,
     max_words: int,
+    endpoint: str = "http://localhost:8080/v1",
 ) -> None:
     """
     번역 파이프라인 메인 루프.
@@ -190,6 +192,7 @@ def run_pipeline(
             )
 
     # 4. 번역 루프
+    client = OpenAI(base_url=endpoint, api_key="not-needed")
     completed = checkpoint_data.get("completed_chunks", 0)
     failed = checkpoint_data.get("failed_chunks", 0)
 
@@ -211,8 +214,8 @@ def run_pipeline(
         try:
             translated_text = translate_chunk(
                 chunk=chunk,
+                client=client,
                 model=model,
-                endpoint="http://localhost:8080/v1",
             )
 
             # 번역 성공
@@ -291,6 +294,11 @@ def main():
         default=800,
         help="청크당 최대 단어 수 (기본: 800)",
     )
+    parser.add_argument(
+        "--endpoint",
+        default="http://localhost:8080/v1",
+        help="MLX-LM 서버 엔드포인트 (기본: http://localhost:8080/v1)",
+    )
 
     args = parser.parse_args()
 
@@ -324,7 +332,7 @@ def main():
         checkpoint_path = f"checkpoints/{input_path.stem}_progress.json"
 
     # 서버 연결 확인
-    endpoint = "http://localhost:8080/v1"
+    endpoint = args.endpoint
     if not _check_server(endpoint):
         logger.error(
             "ERROR: MLX-LM 서버에 연결할 수 없습니다.\n"
@@ -340,6 +348,7 @@ def main():
         checkpoint_path=checkpoint_path,
         resume=args.resume,
         max_words=args.max_words,
+        endpoint=endpoint,
     )
 
 

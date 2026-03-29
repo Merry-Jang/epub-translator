@@ -75,7 +75,7 @@ def build_epub(
 
             # 번역문이 있으면 교체
             translated_text = chapter_translations.get(block_index, None)
-            if translated_text is not None:
+            if translated_text:
                 element.clear()
                 # 번역된 HTML 삽입
                 translated_soup = BeautifulSoup(translated_text, "html.parser")
