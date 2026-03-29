@@ -1,0 +1,132 @@
+"""번역 모듈 — MLX-LM API 호출 + 재시도 로직."""
+
+import logging
+import time
+
+from openai import OpenAI
+
+from src.chunker import Chunk
+
+logger = logging.getLogger(__name__)
+
+SYSTEM_PROMPT = """You are a professional English-to-Korean book translator.
+
+Rules:
+1. Translate accurately while maintaining natural Korean flow
+2. Preserve all HTML tags exactly as they appear (<b>, <i>, <a>, etc.)
+3. Keep proper nouns (person names, place names) in their original English form
+4. Maintain the same number of paragraphs as the input — use blank lines between paragraphs
+5. Output ONLY the Korean translation — no explanations, notes, or commentary
+6. For technical terms, use the common Korean translation with the original in parentheses on first occurrence"""
+
+USER_PROMPT_TEMPLATE = """/no_think
+
+{context_block}Translate the following English text to Korean.
+Each paragraph is separated by a blank line. Preserve the same paragraph structure.
+
+[TEXT]
+{chunk_text}
+[/TEXT]"""
+
+CONTEXT_BLOCK_TEMPLATE = """[CONTEXT — for reference only, do NOT translate this]
+{context}
+[/CONTEXT]
+
+"""
+
+
+class TranslationError(Exception):
+    """번역 실패 예외."""
+    def __init__(self, chunk_id: str, message: str, retry_count: int):
+        self.chunk_id = chunk_id
+        self.retry_count = retry_count
+        super().__init__(f"Chunk {chunk_id}: {message} (retries: {retry_count})")
+
+
+def translate_chunk(
+    chunk: Chunk,
+    model: str = "mlx-community/Qwen3.5-35B-A3B-4bit",
+    endpoint: str = "http://localhost:8080/v1",
+    temperature: float = 0.1,
+    top_p: float = 0.3,
+    max_tokens: int = 4096,
+    max_retries: int = 3,
+) -> str:
+    """
+    하나의 Chunk를 MLX-LM API로 번역한다.
+
+    1. 프롬프트 조립
+    2. OpenAI 호환 API 호출
+    3. 실패 시 exponential backoff 재시도
+    4. 빈 응답 시 1회 재시도
+    5. max_retries 초과 시 TranslationError 발생
+
+    Returns:
+        번역된 한국어 텍스트
+    Raises:
+        TranslationError: 모든 재시도 실패 시
+    """
+    client = OpenAI(base_url=endpoint, api_key="not-needed")
+
+    # 프롬프트 조립
+    context_block = ""
+    if chunk.context:
+        context_block = CONTEXT_BLOCK_TEMPLATE.format(context=chunk.context)
+
+    user_message = USER_PROMPT_TEMPLATE.format(
+        context_block=context_block,
+        chunk_text=chunk.text,
+    )
+
+    messages = [
+        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "user", "content": user_message},
+    ]
+
+    last_error = None
+
+    for attempt in range(max_retries):
+        try:
+            response = client.chat.completions.create(
+                model=model,
+                messages=messages,
+                max_tokens=max_tokens,
+                temperature=temperature,
+                top_p=top_p,
+                stream=False,
+            )
+
+            result = response.choices[0].message.content
+
+            # 응답 잘림 확인
+            if response.choices[0].finish_reason == "length":
+                logger.warning("WARNING: Chunk %s response truncated (finish_reason=length)",
+                               chunk.id)
+
+            # 빈 응답 처리
+            if not result or not result.strip():
+                if attempt < max_retries - 1:
+                    logger.warning("빈 응답 — 재시도 %d/%d: %s",
+                                   attempt + 1, max_retries, chunk.id)
+                    time.sleep(2 ** attempt)
+                    continue
+                raise TranslationError(chunk.id, "빈 응답 반복", attempt + 1)
+
+            logger.debug("번역 완료: %s (attempt %d)", chunk.id, attempt + 1)
+            return result.strip()
+
+        except TranslationError:
+            raise
+        except Exception as e:
+            last_error = e
+            if attempt < max_retries - 1:
+                wait = 2 ** attempt  # 1s, 2s, 4s
+                logger.warning("API 오류 — %ds 후 재시도 %d/%d: %s — %s",
+                               wait, attempt + 1, max_retries, chunk.id, e)
+                time.sleep(wait)
+            else:
+                raise TranslationError(
+                    chunk.id,
+                    f"API 호출 실패: {last_error}",
+                    max_retries,
+                )
