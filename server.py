@@ -166,13 +166,14 @@ async def start_translation(
             task.error_message = "MLX-LM 서버에 연결할 수 없습니다."
             raise HTTPException(503, task.error_message)
 
-    # 7. 체크포인트 존재 시 자동 resume
+    # 7. 체크포인트 존재 시 자동 resume (max_words 일치할 때만)
     if os.path.exists(checkpoint_path) and not resume:
         ckpt = load_progress(checkpoint_path)
         if ckpt:
             done = ckpt.get("completed_chunks", 0)
             total = ckpt.get("total_chunks", 0)
-            if 0 < done < total:
+            saved_max_words = ckpt.get("max_words")
+            if 0 < done < total and saved_max_words == max_words:
                 resume = True
 
     # 8. 백그라운드 번역 시작 (세마포어 제한) [필수 #4]
@@ -242,6 +243,8 @@ async def stream_progress(task_id: str):
                 "failed": task.failed_chunks,
                 "filename": task.filename,
                 "book_title": task.book_title,
+                "updated_at": ckpt.get("updated_at", "") if ckpt else "",
+                "server_time": datetime.now().isoformat(),
             }
             yield f"event: progress\ndata: {json.dumps(progress_data, ensure_ascii=False)}\n\n"
 

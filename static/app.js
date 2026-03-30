@@ -199,8 +199,22 @@ const App = (() => {
 
             // 텍스트 업데이트
             dom.progressText.textContent = `${pct}%`;
+
+            // 경과시간 계산
+            let elapsed = '';
+            if (data.updated_at && data.server_time) {
+                const updated = new Date(data.updated_at);
+                const server = new Date(data.server_time);
+                const diffSec = Math.floor((server - updated) / 1000);
+                if (diffSec < 60) elapsed = `${diffSec}초 전 업데이트`;
+                else if (diffSec < 3600) elapsed = `${Math.floor(diffSec / 60)}분 전 업데이트`;
+                else elapsed = `${Math.floor(diffSec / 3600)}시간 전 업데이트`;
+            }
+
+            const statusIcon = data.status === 'running' ? '⏳ 번역 중... ' : '';
             dom.progressDetail.innerHTML =
-                `처리 중인 청크: <span class="text-primary font-bold">#${data.completed} / #${data.total}</span>`;
+                `${statusIcon}청크: <span class="text-primary font-bold">#${data.completed} / #${data.total}</span>`
+                + (elapsed ? ` <span class="text-on-surface-variant text-xs">(${elapsed})</span>` : '');
 
             if (data.book_title) {
                 dom.bookTitle.textContent = data.book_title;
