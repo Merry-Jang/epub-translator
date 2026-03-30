@@ -250,6 +250,14 @@ def _run_pipeline_inner(
         if status == "failed" and not resume:
             continue
 
+        # 현재 번역 중인 청크 정보 저장 (웹 UI 진행 표시용)
+        checkpoint_data["current_chunk"] = {
+            "id": chunk.id,
+            "started_at": datetime.now().isoformat(),
+            "word_count": len(chunk.text.split()),
+        }
+        save_progress(checkpoint_path, checkpoint_data)
+
         try:
             translated_text = translate_chunk(
                 chunk=chunk,
@@ -277,7 +285,8 @@ def _run_pipeline_inner(
             failed += 1
             checkpoint_data["failed_chunks"] = failed
 
-        # 매 청크 완료 시 체크포인트 저장
+        # 현재 청크 정보 리셋 + 체크포인트 저장
+        checkpoint_data["current_chunk"] = None
         checkpoint_data["updated_at"] = datetime.now().isoformat()
         save_progress(checkpoint_path, checkpoint_data)
         pbar.update(1)
@@ -326,9 +335,9 @@ def main():
     parser.add_argument("--output", help="출력 EPUB 경로 (기본: input_kr.epub)")
     parser.add_argument(
         "--provider",
-        choices=["local", "openai", "claude"],
+        choices=["local", "openai", "claude", "gemini"],
         default="local",
-        help="번역 엔진 선택: local(MLX-LM), openai, claude (기본: local)",
+        help="번역 엔진 선택: local(MLX-LM), openai, claude, gemini (기본: local)",
     )
     parser.add_argument(
         "--model",
@@ -338,7 +347,7 @@ def main():
     parser.add_argument(
         "--api-key",
         default=None,
-        help="API 키 (미입력 시 OPENAI_API_KEY / ANTHROPIC_API_KEY 환경변수 사용)",
+        help="API 키 (미입력 시 OPENAI_API_KEY / ANTHROPIC_API_KEY / GEMINI_API_KEY 환경변수 사용)",
     )
     parser.add_argument("--checkpoint", help="체크포인트 파일 경로")
     parser.add_argument("--resume", action="store_true", help="기존 체크포인트에서 이어하기")

@@ -127,7 +127,7 @@
             <!-- Engine Selection -->
             <div class="space-y-4">
                 <label class="label-md text-on-surface-variant block">번역 엔진</label>
-                <div class="grid grid-cols-3 gap-3">
+                <div class="grid grid-cols-4 gap-3">
                     <label class="flex flex-col items-center gap-2 p-3 rounded-lg border border-outline-variant/15 bg-surface-container hover:bg-surface-variant transition-all cursor-pointer has-[:checked]:border-primary has-[:checked]:bg-primary/5">
                         <input checked name="engine" type="radio" value="local" class="hidden"/>
                         <span class="material-symbols-outlined text-primary">memory</span>
@@ -142,6 +142,11 @@
                         <input name="engine" type="radio" value="claude" class="hidden"/>
                         <span class="material-symbols-outlined text-primary">auto_awesome</span>
                         <span class="label-md text-on-surface">Claude</span>
+                    </label>
+                    <label class="flex flex-col items-center gap-2 p-3 rounded-lg border border-outline-variant/15 bg-surface-container hover:bg-surface-variant transition-all cursor-pointer has-[:checked]:border-primary has-[:checked]:bg-primary/5">
+                        <input name="engine" type="radio" value="gemini" class="hidden"/>
+                        <span class="material-symbols-outlined text-primary">diamond</span>
+                        <span class="label-md text-on-surface">Gemini</span>
                     </label>
                 </div>
             </div>

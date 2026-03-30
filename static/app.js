@@ -212,9 +212,18 @@ const App = (() => {
             }
 
             const statusIcon = data.status === 'running' ? '⏳ 번역 중... ' : '';
+            let chunkLine = '';
+            if (data.current_chunk && data.status === 'running') {
+                const chunkElapsed = _formatElapsed(data.current_chunk.started_at, data.server_time);
+                chunkLine = `<br/><span class="text-tertiary text-xs">📎 ${_escapeHtml(data.current_chunk.id)} 번역 중...`
+                    + (data.current_chunk.word_count ? ` (${data.current_chunk.word_count}단어` : '')
+                    + (chunkElapsed ? `, ${chunkElapsed})` : ')')
+                    + `</span>`;
+            }
             dom.progressDetail.innerHTML =
                 `${statusIcon}청크: <span class="text-primary font-bold">#${data.completed} / #${data.total}</span>`
-                + (elapsed ? ` <span class="text-on-surface-variant text-xs">(${elapsed})</span>` : '');
+                + (elapsed ? ` <span class="text-on-surface-variant text-xs">(${elapsed})</span>` : '')
+                + chunkLine;
 
             if (data.book_title) {
                 dom.bookTitle.textContent = data.book_title;
@@ -435,6 +444,15 @@ const App = (() => {
         } else {
             dom.apiKeySection.classList.remove('hidden');
         }
+    }
+
+    function _formatElapsed(startedAt, serverTime) {
+        if (!startedAt || !serverTime) return '';
+        const started = new Date(startedAt);
+        const server = new Date(serverTime);
+        const diffSec = Math.max(0, Math.floor((server - started) / 1000));
+        if (diffSec < 60) return `${diffSec}초 경과`;
+        return `${Math.floor(diffSec / 60)}분 ${diffSec % 60}초 경과`;
     }
 
     // ─── Init ───────────────────────────────────

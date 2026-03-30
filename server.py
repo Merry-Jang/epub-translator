@@ -243,6 +243,7 @@ async def stream_progress(task_id: str):
                 "failed": task.failed_chunks,
                 "filename": task.filename,
                 "book_title": task.book_title,
+                "current_chunk": ckpt.get("current_chunk") if ckpt else None,
                 "updated_at": ckpt.get("updated_at", "") if ckpt else "",
                 "server_time": datetime.now().isoformat(),
             }

@@ -8,12 +8,13 @@ from typing import Literal
 
 logger = logging.getLogger(__name__)
 
-Provider = Literal["local", "openai", "claude"]
+Provider = Literal["local", "openai", "claude", "gemini"]
 
 DEFAULT_MODELS: dict[str, str] = {
     "local": "mlx-community/Qwen3.5-35B-A3B-4bit",
     "openai": "gpt-4o-mini",
     "claude": "claude-3-5-haiku-20241022",
+    "gemini": "gemini-2.5-flash",
 }
 
 
@@ -42,12 +43,17 @@ class LLMClient:
         self._openai_client = None
         self._anthropic_client = None
 
-        if provider in ("local", "openai"):
+        if provider in ("local", "openai", "gemini"):
             from openai import OpenAI
             kwargs: dict = {}
             if provider == "local":
                 kwargs["api_key"] = api_key or "not-needed"
                 kwargs["base_url"] = endpoint or "http://localhost:8080/v1"
+            elif provider == "gemini":
+                # Gemini OpenAI 호환 API 사용
+                import os
+                kwargs["api_key"] = api_key or os.environ.get("GEMINI_API_KEY", "")
+                kwargs["base_url"] = endpoint or "https://generativelanguage.googleapis.com/v1beta/openai/"
             else:
                 # openai — api_key None이면 OPENAI_API_KEY 환경변수 자동 사용
                 if api_key:
@@ -65,7 +71,7 @@ class LLMClient:
             self._anthropic_client = Anthropic(**kwargs)
 
         else:
-            raise ValueError(f"지원하지 않는 프로바이더: {provider!r}. (local / openai / claude)")
+            raise ValueError(f"지원하지 않는 프로바이더: {provider!r}. (local / openai / claude / gemini)")
 
     def complete(
         self,
@@ -76,7 +82,7 @@ class LLMClient:
         top_p: float = 0.3,
     ) -> CompletionResult:
         """통합 완성 메서드."""
-        if self.provider in ("local", "openai"):
+        if self.provider in ("local", "openai", "gemini"):
             return self._complete_openai(messages, model, max_tokens, temperature, top_p)
         else:
             return self._complete_anthropic(messages, model, max_tokens, temperature, top_p)
