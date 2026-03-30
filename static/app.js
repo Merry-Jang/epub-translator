@@ -80,6 +80,37 @@ const App = (() => {
             return res.json();
         },
 
+        async resumeTranslation(checkpointFile) {
+            const formData = new FormData();
+            formData.append('checkpoint_file', checkpointFile);
+            formData.append('provider', _getSelectedEngine());
+            formData.append('api_key', dom.apiKeyInput.value);
+            formData.append('endpoint', dom.endpointInput.value);
+            formData.append('model', dom.modelInput.value);
+            formData.append('max_words', dom.chunkSlider.value);
+
+            const res = await fetch('/api/resume', {
+                method: 'POST',
+                body: formData,
+            });
+            if (!res.ok) {
+                const err = await res.json();
+                throw new Error(err.detail || '이어하기 실패');
+            }
+            return res.json();
+        },
+
+        async deleteCheckpoint(checkpointFile) {
+            const res = await fetch(`/api/checkpoint/${encodeURIComponent(checkpointFile)}`, {
+                method: 'DELETE',
+            });
+            if (!res.ok) {
+                const err = await res.json();
+                throw new Error(err.detail || '삭제 실패');
+            }
+            return res.json();
+        },
+
         downloadUrl(taskId) {
             return `/api/download/${taskId}`;
         },
@@ -258,23 +289,97 @@ const App = (() => {
                 dom.checkpointList.innerHTML = checkpoints.map(cp => {
                     const pct = cp.total > 0 ? Math.round((cp.completed / cp.total) * 100) : 0;
                     const icon = pct === 100 ? 'check_circle' : 'description';
+                    const isComplete = pct === 100;
+                    const cpFile = _escapeHtml(cp.checkpoint_file || '');
                     return `
-                        <div class="bg-surface-container-high p-4 rounded-xl border border-outline-variant/10 flex items-center gap-4 hover:bg-surface-variant transition-colors cursor-pointer group">
-                            <div class="w-12 h-12 rounded-lg bg-surface-container-highest flex items-center justify-center text-primary group-hover:scale-110 transition-transform">
-                                <span class="material-symbols-outlined">${icon}</span>
-                            </div>
-                            <div class="flex-1">
-                                <p class="text-sm font-bold text-on-surface">${_escapeHtml(cp.filename || '(unknown)')}</p>
-                                <div class="flex items-center gap-2 mt-1">
-                                    <div class="flex-1 h-1 bg-surface-container rounded-full overflow-hidden">
-                                        <div class="h-full bg-primary/60" style="width:${pct}%"></div>
+                        <div class="bg-surface-container-high p-4 rounded-xl border border-outline-variant/10 group">
+                            <div class="flex items-center gap-4">
+                                <div class="w-12 h-12 rounded-lg bg-surface-container-highest flex items-center justify-center text-primary group-hover:scale-110 transition-transform">
+                                    <span class="material-symbols-outlined">${icon}</span>
+                                </div>
+                                <div class="flex-1">
+                                    <p class="text-sm font-bold text-on-surface">${_escapeHtml(cp.filename || '(unknown)')}</p>
+                                    <div class="flex items-center gap-2 mt-1">
+                                        <div class="flex-1 h-1 bg-surface-container rounded-full overflow-hidden">
+                                            <div class="h-full bg-primary/60" style="width:${pct}%"></div>
+                                        </div>
+                                        <span class="text-[10px] font-bold text-primary">${pct}%</span>
                                     </div>
-                                    <span class="text-[10px] font-bold text-primary">${pct}%</span>
                                 </div>
                             </div>
-                            <span class="material-symbols-outlined text-outline group-hover:text-primary">chevron_right</span>
+                            <div class="flex gap-2 mt-3 ml-16">
+                                ${!isComplete ? `
+                                <button class="cp-resume-btn px-3 py-1.5 btn-primary-gradient rounded-lg text-on-primary-container text-xs font-bold flex items-center gap-1 hover:scale-105 active:scale-95 transition-transform"
+                                        data-checkpoint="${cpFile}">
+                                    <span class="material-symbols-outlined text-sm">play_arrow</span>
+                                    이어하기
+                                </button>` : ''}
+                                <button class="cp-delete-btn px-3 py-1.5 bg-surface-container-highest border border-outline-variant/30 rounded-lg text-error text-xs font-bold flex items-center gap-1 hover:bg-error/10 transition-colors"
+                                        data-checkpoint="${cpFile}">
+                                    <span class="material-symbols-outlined text-sm">delete</span>
+                                    삭제
+                                </button>
+                            </div>
                         </div>`;
                 }).join('');
+
+                // 이어하기 버튼 이벤트 바인딩
+                dom.checkpointList.querySelectorAll('.cp-resume-btn').forEach(btn => {
+                    btn.addEventListener('click', async (e) => {
+                        e.stopPropagation();
+                        const cpFile = btn.dataset.checkpoint;
+                        if (state.status === 'running' || state.status === 'uploading') {
+                            ui.showError('다른 번역이 진행 중입니다.');
+                            return;
+                        }
+
+                        ui.resetProgress();
+                        ui.setStatus('uploading');
+                        ui.appendLog({
+                            time: _now(),
+                            level: 'INFO',
+                            message: `체크포인트에서 이어하기: ${cpFile}`,
+                        });
+
+                        try {
+                            const result = await api.resumeTranslation(cpFile);
+                            state.taskId = result.task_id;
+                            ui.setStatus('running');
+                            ui.appendLog({
+                                time: _now(),
+                                level: 'INFO',
+                                message: `번역 재개 작업이 시작되었습니다. (Task: ${result.task_id})`,
+                            });
+                            sse.connect(result.task_id);
+                        } catch (err) {
+                            ui.showError(err.message);
+                            ui.setStatus('failed');
+                        }
+                    });
+                });
+
+                // 삭제 버튼 이벤트 바인딩
+                dom.checkpointList.querySelectorAll('.cp-delete-btn').forEach(btn => {
+                    btn.addEventListener('click', async (e) => {
+                        e.stopPropagation();
+                        const cpFile = btn.dataset.checkpoint;
+                        if (!confirm(`체크포인트를 삭제하시겠습니까?\n${cpFile}`)) {
+                            return;
+                        }
+
+                        try {
+                            await api.deleteCheckpoint(cpFile);
+                            ui.appendLog({
+                                time: _now(),
+                                level: 'INFO',
+                                message: `체크포인트 삭제됨: ${cpFile}`,
+                            });
+                            ui.loadCheckpoints(); // 목록 새로고침
+                        } catch (err) {
+                            ui.showError(`체크포인트 삭제 실패: ${err.message}`);
+                        }
+                    });
+                });
             } catch (e) {
                 // 체크포인트 로드 실패 시 조용히 무시
             }

@@ -125,7 +125,7 @@ async def start_translation(
 
     input_path = os.path.join(UPLOAD_DIR, f"{task_id}_{safe_name}")
     output_path = os.path.join(OUTPUT_DIR, f"{task_id}_{stem}_kr.epub")  # [권장 #7]
-    checkpoint_path = os.path.join(CHECKPOINT_DIR, f"{task_id}_{stem}_progress.json")
+    checkpoint_path = os.path.join(CHECKPOINT_DIR, f"{stem}_progress.json")
 
     # 3. 파일 크기 제한 [필수 #2]
     content = await file.read()
@@ -329,12 +329,14 @@ def _load_checkpoints_sync() -> list[dict]:
             total = ckpt.get("total_chunks", 0)
             completed = ckpt.get("completed_chunks", 0)
             result.append({
+                "checkpoint_file": Path(f).name,
                 "filename": Path(ckpt.get("source", "")).name,
                 "total": total,
                 "completed": completed,
                 "failed": ckpt.get("failed_chunks", 0),
                 "updated_at": ckpt.get("updated_at", ""),
                 "model": ckpt.get("model", ""),
+                "source": ckpt.get("source", ""),
             })
         except Exception:
             continue
@@ -347,6 +349,128 @@ async def list_checkpoints():
     """저장된 체크포인트 목록을 반환한다."""
     result = await asyncio.to_thread(_load_checkpoints_sync)
     return {"checkpoints": result}
+
+
+@app.post("/api/resume")
+async def resume_translation(
+    checkpoint_file: str = Form(...),
+    provider: str = Form("local"),
+    model: str = Form(""),
+    api_key: str = Form(""),
+    endpoint: str = Form(""),
+    max_words: int = Form(800),
+):
+    """체크포인트에서 번역을 재개한다."""
+    # 1. 체크포인트 파일 검증 (경로 순회 방지)
+    safe_name = Path(checkpoint_file).name
+    checkpoint_path = os.path.join(CHECKPOINT_DIR, safe_name)
+
+    if not os.path.exists(checkpoint_path):
+        raise HTTPException(404, "체크포인트 파일을 찾을 수 없습니다.")
+
+    ckpt = load_progress(checkpoint_path)
+    if not ckpt:
+        raise HTTPException(400, "체크포인트 파일이 손상되었습니다.")
+
+    # 2. source 파일 존재 확인
+    source_path = ckpt.get("source", "")
+    if not source_path or not os.path.exists(source_path):
+        raise HTTPException(
+            400,
+            "원본 EPUB 파일을 찾을 수 없습니다. "
+            "동일한 파일을 다시 업로드하여 번역을 시작하세요.",
+        )
+
+    # 3. TaskInfo 생성
+    task_id = str(uuid.uuid4())[:12]
+    original_name = Path(source_path).name
+    stem = Path(original_name).stem
+    output_path = os.path.join(OUTPUT_DIR, f"{task_id}_{stem}_kr.epub")
+
+    task = create_task(task_id, original_name, source_path, output_path, checkpoint_path)
+
+    # 4. 모델/클라이언트 준비
+    actual_model = model.strip() or DEFAULT_MODELS.get(provider, "")
+    if not actual_model:
+        task.status = TaskStatus.FAILED
+        task.error_message = f"지원하지 않는 프로바이더: {provider}"
+        raise HTTPException(400, task.error_message)
+
+    ep = endpoint.strip() or None
+    key = api_key.strip() or None
+
+    try:
+        client = LLMClient(provider=provider, api_key=key, endpoint=ep)
+    except Exception as e:
+        task.status = TaskStatus.FAILED
+        task.error_message = f"클라이언트 초기화 실패: {e}"
+        raise HTTPException(400, task.error_message)
+
+    # 5. 로컬 서버 연결 확인
+    if provider == "local":
+        connected = await asyncio.to_thread(client.check_connection)
+        if not connected:
+            task.status = TaskStatus.FAILED
+            task.error_message = "MLX-LM 서버에 연결할 수 없습니다."
+            raise HTTPException(503, task.error_message)
+
+    # 6. 백그라운드 번역 시작 (resume=True 고정)
+    async def _run_in_background():
+        async with _translation_semaphore:
+            if task.cancel_event.is_set():
+                task.status = TaskStatus.CANCELLED
+                return
+
+            task.status = TaskStatus.RUNNING
+            log_handler = BufferLogHandler(task.log_buffer)
+            try:
+                await asyncio.to_thread(
+                    run_pipeline,
+                    input_path=source_path,
+                    output_path=output_path,
+                    model=actual_model,
+                    checkpoint_path=checkpoint_path,
+                    resume=True,
+                    max_words=max_words,
+                    client=client,
+                    cancel_event=task.cancel_event,
+                    log_handler=log_handler,
+                )
+                if task.cancel_event.is_set():
+                    task.status = TaskStatus.CANCELLED
+                else:
+                    task.status = TaskStatus.COMPLETED
+            except Exception as e:
+                task.status = TaskStatus.FAILED
+                task.error_message = str(e)
+                logger.error("번역 작업 실패 [%s]: %s", task_id, e)
+
+    asyncio.create_task(_run_in_background())
+
+    return {
+        "task_id": task_id,
+        "status": task.status.value,
+        "filename": original_name,
+    }
+
+
+@app.delete("/api/checkpoint/{filename}")
+async def delete_checkpoint(filename: str):
+    """체크포인트 파일을 삭제한다."""
+    # 경로 순회 방지 — 파일명만 사용
+    safe_name = Path(filename).name
+    checkpoint_path = os.path.join(CHECKPOINT_DIR, safe_name)
+
+    if not os.path.exists(checkpoint_path):
+        raise HTTPException(404, "체크포인트 파일을 찾을 수 없습니다.")
+
+    try:
+        os.unlink(checkpoint_path)
+        logger.info("체크포인트 삭제: %s", checkpoint_path)
+    except OSError as e:
+        raise HTTPException(500, f"파일 삭제 실패: {e}")
+
+    return {"message": "체크포인트가 삭제되었습니다.", "filename": safe_name}
 
 
 # ──────────────────────────────────────────────
