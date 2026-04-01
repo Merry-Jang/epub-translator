@@ -4,6 +4,7 @@
 import argparse
 import logging
 import sys
+import threading
 import time
 from collections import defaultdict
 from datetime import datetime
@@ -13,7 +14,7 @@ from tqdm import tqdm
 
 from src.epub_parser import parse_epub
 from src.chunker import chunk_chapter
-from openai import OpenAI
+from src.providers import LLMClient, DEFAULT_MODELS
 from src.translator import translate_chunk, TranslationError
 from src.checkpoint import save_progress, load_progress
 from src.epub_builder import build_epub
@@ -22,7 +23,7 @@ logger = logging.getLogger(__name__)
 
 
 def _check_server(endpoint: str) -> bool:
-    """MLX-LM 서버 연결을 확인한다."""
+    """MLX-LM 로컬 서버 연결을 확인한다."""
     import httpx
     try:
         resp = httpx.get(f"{endpoint}/models", timeout=5.0)
@@ -108,7 +109,9 @@ def run_pipeline(
     checkpoint_path: str,
     resume: bool,
     max_words: int,
-    endpoint: str = "http://localhost:8080/v1",
+    client: LLMClient,
+    cancel_event: threading.Event | None = None,
+    log_handler: logging.Handler | None = None,
 ) -> None:
     """
     번역 파이프라인 메인 루프.
@@ -121,6 +124,38 @@ def run_pipeline(
     """
     start_time = time.time()
 
+    # 웹 UI용 로그 핸들러 등록 (translate + src.* 하위 모듈 포함)
+    _handler_loggers = []
+    if log_handler:
+        log_handler.setLevel(logging.INFO)
+        for name in ("translate", "src"):
+            lg = logging.getLogger(name)
+            lg.addHandler(log_handler)
+            _handler_loggers.append(lg)
+
+    try:
+        _run_pipeline_inner(
+            input_path, output_path, model, checkpoint_path,
+            resume, max_words, client, cancel_event, start_time,
+        )
+    finally:
+        if log_handler:
+            for lg in _handler_loggers:
+                lg.removeHandler(log_handler)
+
+
+def _run_pipeline_inner(
+    input_path: str,
+    output_path: str,
+    model: str,
+    checkpoint_path: str,
+    resume: bool,
+    max_words: int,
+    client: LLMClient,
+    cancel_event: threading.Event | None,
+    start_time: float,
+) -> None:
+    """run_pipeline 내부 로직. log_handler 정리를 위해 분리."""
     # 출력 경로 안전성 확인 (리뷰 #7)
     out = Path(output_path)
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -192,7 +227,6 @@ def run_pipeline(
             )
 
     # 4. 번역 루프
-    client = OpenAI(base_url=endpoint, api_key="not-needed")
     completed = checkpoint_data.get("completed_chunks", 0)
     failed = checkpoint_data.get("failed_chunks", 0)
 
@@ -200,6 +234,11 @@ def run_pipeline(
     pbar = tqdm(total=total_chunks, initial=completed, desc="번역 진행", unit="chunk")
 
     for chunk in all_chunks:
+        # 취소 신호 확인
+        if cancel_event and cancel_event.is_set():
+            logger.info("사용자 요청으로 번역이 취소되었습니다.")
+            break
+
         chunk_info = checkpoint_data["chunks"].get(chunk.id, {})
         status = chunk_info.get("status", "pending")
 
@@ -210,6 +249,14 @@ def run_pipeline(
         # resume 모드가 아닌데 failed 상태면 스킵
         if status == "failed" and not resume:
             continue
+
+        # 현재 번역 중인 청크 정보 저장 (웹 UI 진행 표시용)
+        checkpoint_data["current_chunk"] = {
+            "id": chunk.id,
+            "started_at": datetime.now().isoformat(),
+            "word_count": len(chunk.text.split()),
+        }
+        save_progress(checkpoint_path, checkpoint_data)
 
         try:
             translated_text = translate_chunk(
@@ -238,7 +285,8 @@ def run_pipeline(
             failed += 1
             checkpoint_data["failed_chunks"] = failed
 
-        # 매 청크 완료 시 체크포인트 저장
+        # 현재 청크 정보 리셋 + 체크포인트 저장
+        checkpoint_data["current_chunk"] = None
         checkpoint_data["updated_at"] = datetime.now().isoformat()
         save_progress(checkpoint_path, checkpoint_data)
         pbar.update(1)
@@ -258,7 +306,11 @@ def run_pipeline(
 
     save_progress(checkpoint_path, checkpoint_data)
 
-    # 5. EPUB 빌드
+    # 5. EPUB 빌드 (취소 시 스킵)
+    if cancel_event and cancel_event.is_set():
+        logger.info("번역 취소됨 — EPUB 빌드를 건너뜁니다. 체크포인트는 저장되어 있습니다.")
+        return
+
     logger.info("EPUB 빌드 시작...")
     translated_chapters = _build_translated_chapters(checkpoint_data, all_chunks)
     build_epub(input_path, translated_chapters, output_path)
@@ -282,9 +334,20 @@ def main():
     parser.add_argument("input", help="입력 EPUB 파일 경로")
     parser.add_argument("--output", help="출력 EPUB 경로 (기본: input_kr.epub)")
     parser.add_argument(
+        "--provider",
+        choices=["local", "openai", "claude", "gemini"],
+        default="local",
+        help="번역 엔진 선택: local(MLX-LM), openai, claude, gemini (기본: local)",
+    )
+    parser.add_argument(
         "--model",
-        default="mlx-community/Qwen3.5-35B-A3B-4bit",
-        help="MLX-LM 모델 이름 (기본: mlx-community/Qwen3.5-35B-A3B-4bit)",
+        default=None,
+        help="모델 이름 (기본: 프로바이더별 자동 선택)",
+    )
+    parser.add_argument(
+        "--api-key",
+        default=None,
+        help="API 키 (미입력 시 OPENAI_API_KEY / ANTHROPIC_API_KEY / GEMINI_API_KEY 환경변수 사용)",
     )
     parser.add_argument("--checkpoint", help="체크포인트 파일 경로")
     parser.add_argument("--resume", action="store_true", help="기존 체크포인트에서 이어하기")
@@ -296,8 +359,8 @@ def main():
     )
     parser.add_argument(
         "--endpoint",
-        default="http://localhost:8080/v1",
-        help="MLX-LM 서버 엔드포인트 (기본: http://localhost:8080/v1)",
+        default=None,
+        help="로컬 서버 엔드포인트 (기본: http://localhost:8080/v1, --provider=local 전용)",
     )
 
     args = parser.parse_args()
@@ -320,35 +383,42 @@ def main():
         sys.exit(1)
 
     # 출력 경로
-    if args.output:
-        output_path = args.output
-    else:
-        output_path = str(input_path.with_stem(f"{input_path.stem}_kr"))
+    output_path = args.output or str(input_path.with_stem(f"{input_path.stem}_kr"))
 
     # 체크포인트 경로
-    if args.checkpoint:
-        checkpoint_path = args.checkpoint
-    else:
-        checkpoint_path = f"checkpoints/{input_path.stem}_progress.json"
+    checkpoint_path = args.checkpoint or f"checkpoints/{input_path.stem}_progress.json"
 
-    # 서버 연결 확인
-    endpoint = args.endpoint
-    if not _check_server(endpoint):
+    # 모델 기본값
+    model = args.model or DEFAULT_MODELS[args.provider]
+
+    # LLM 클라이언트 생성
+    endpoint = args.endpoint or ("http://localhost:8080/v1" if args.provider == "local" else None)
+    try:
+        client = LLMClient(provider=args.provider, api_key=args.api_key, endpoint=endpoint)
+    except Exception as e:
+        logger.error("클라이언트 초기화 실패: %s", e)
+        sys.exit(1)
+
+    # 로컬 서버 연결 확인 (cloud 프로바이더는 스킵)
+    if args.provider == "local" and not client.check_connection():
         logger.error(
-            "ERROR: MLX-LM 서버에 연결할 수 없습니다.\n"
+            "ERROR: MLX-LM 서버에 연결할 수 없습니다 (%s)\n"
             "서버를 먼저 시작하세요: mlx_lm.server --model %s --port 8080",
-            args.model,
+            endpoint,
+            model,
         )
         sys.exit(1)
+
+    logger.info("프로바이더: %s / 모델: %s", args.provider, model)
 
     run_pipeline(
         input_path=str(input_path),
         output_path=output_path,
-        model=args.model,
+        model=model,
         checkpoint_path=checkpoint_path,
         resume=args.resume,
         max_words=args.max_words,
-        endpoint=endpoint,
+        client=client,
     )
 
 

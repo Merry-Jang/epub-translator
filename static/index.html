@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html class="dark" lang="ko">
+<head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>EPUB Translator Studio</title>
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet"/>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<script>
+    tailwind.config = {
+        darkMode: "class",
+        theme: {
+            extend: {
+                colors: {
+                    "on-surface-variant": "#a0abc2",
+                    "surface-tint": "#85adff",
+                    "surface-variant": "#15263f",
+                    "surface-container-low": "#061326",
+                    "primary-fixed-dim": "#5391ff",
+                    "outline-variant": "#3d485c",
+                    "on-primary-fixed-variant": "#002a62",
+                    "surface-dim": "#040e1f",
+                    "on-tertiary-fixed": "#001833",
+                    "on-background": "#dbe6fe",
+                    "surface-bright": "#1b2c47",
+                    "on-error": "#490006",
+                    "tertiary": "#7fb6ff",
+                    "primary": "#85adff",
+                    "on-primary-container": "#002150",
+                    "tertiary-fixed": "#7ab3ff",
+                    "surface-container-high": "#102036",
+                    "inverse-surface": "#f9f9ff",
+                    "tertiary-fixed-dim": "#61a6fb",
+                    "on-secondary-container": "#c1d1eb",
+                    "surface-container": "#0b1a2f",
+                    "on-tertiary": "#003361",
+                    "on-primary": "#002c66",
+                    "primary-container": "#6e9fff",
+                    "inverse-on-surface": "#4a5569",
+                    "on-surface": "#dbe6fe",
+                    "outline": "#6b768b",
+                    "surface-container-highest": "#15263f",
+                    "secondary-fixed-dim": "#bacae4",
+                    "background": "#040e1f",
+                    "on-error-container": "#ffa8a3",
+                    "on-secondary-fixed": "#29394e",
+                    "inverse-primary": "#005bc4",
+                    "surface": "#040e1f",
+                    "secondary": "#c8d8f3",
+                    "tertiary-container": "#64a8fe",
+                    "on-secondary": "#3c4c61",
+                    "surface-container-lowest": "#000000",
+                    "on-secondary-fixed-variant": "#46556b",
+                    "secondary-container": "#38485d",
+                    "error-container": "#9f0519",
+                    "secondary-fixed": "#c8d8f3",
+                    "primary-fixed": "#6e9fff",
+                    "error": "#ff716c",
+                    "on-primary-fixed": "#000000",
+                    "primary-dim": "#699cff",
+                    "on-tertiary-container": "#00284e",
+                    "tertiary-dim": "#5ba0f5",
+                    "error-dim": "#d7383b",
+                    "on-tertiary-fixed-variant": "#003a6c",
+                    "secondary-dim": "#bacae4"
+                },
+                fontFamily: {
+                    "headline": ["Manrope"],
+                    "body": ["Manrope"],
+                    "label": ["Manrope"]
+                },
+                borderRadius: {"DEFAULT": "0.25rem", "lg": "0.5rem", "xl": "0.75rem", "full": "9999px"},
+            },
+        },
+    }
+</script>
+<style>
+    body { font-family: 'Manrope', sans-serif; background-color: #040e1f; color: #dbe6fe; }
+    .material-symbols-outlined { font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24; }
+    .glass-panel { background: rgba(21, 38, 63, 0.7); backdrop-filter: blur(12px); }
+    .glow-aura { box-shadow: 0 0 20px 2px rgba(133, 173, 255, 0.15); }
+    .text-gradient { background: linear-gradient(135deg, #85adff, #6e9fff); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+    .btn-primary-gradient { background: linear-gradient(135deg, #85adff, #6e9fff); }
+    .custom-scrollbar::-webkit-scrollbar { width: 4px; }
+    .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+    .custom-scrollbar::-webkit-scrollbar-thumb { background: #3d485c; border-radius: 10px; }
+</style>
+</head>
+<body class="min-h-screen bg-surface">
+
+<!-- TopNavBar -->
+<nav class="fixed top-0 w-full z-50 bg-[#061326]/70 backdrop-blur-xl bg-gradient-to-b from-[#15263f]/20 to-transparent shadow-[0_0_20px_rgba(133,173,255,0.1)]">
+    <div class="flex justify-between items-center px-8 h-16 w-full max-w-[1920px] mx-auto">
+        <div class="text-2xl font-extrabold tracking-tighter text-[#dbe6fe] font-headline">EPUB Translator Studio</div>
+        <div class="hidden md:flex items-center gap-8">
+            <a class="text-[#85adff] border-b-2 border-[#85adff] pb-1 font-semibold" href="#">Editor</a>
+        </div>
+        <div class="flex items-center gap-4">
+            <button class="p-2 rounded-full text-[#85adff] hover:bg-[#85adff]/10 transition-all duration-300 ease-out active:scale-95">
+                <span class="material-symbols-outlined">account_circle</span>
+            </button>
+        </div>
+    </div>
+</nav>
+
+<main class="pt-24 pb-12 px-8 max-w-[1920px] mx-auto grid grid-cols-1 lg:grid-cols-12 gap-8">
+
+    <!-- Left Panel: Settings -->
+    <aside class="lg:col-span-4 space-y-6">
+        <div class="glass-panel rounded-xl p-6 space-y-8 border border-outline-variant/15">
+            <h2 class="headline-md font-bold text-on-background tracking-tight">번역 설정</h2>
+
+            <!-- EPUB Upload -->
+            <div class="space-y-3">
+                <label class="label-md text-on-surface-variant block">파일 업로드</label>
+                <div id="drop-zone" class="border-2 border-dashed border-outline-variant/30 rounded-xl p-8 flex flex-col items-center justify-center gap-3 hover:border-primary/50 transition-colors cursor-pointer group bg-surface-container-lowest">
+                    <span class="material-symbols-outlined text-4xl text-outline group-hover:text-primary transition-colors">upload_file</span>
+                    <div class="text-center">
+                        <p id="file-name" class="title-md font-semibold text-on-surface">EPUB 파일을 선택하거나 끌어오세요</p>
+                        <p class="label-md text-on-surface-variant">최대 파일 크기: 50MB</p>
+                    </div>
+                </div>
+                <input type="file" id="file-input" accept=".epub" class="hidden" />
+            </div>
+
+            <!-- Engine Selection -->
+            <div class="space-y-4">
+                <label class="label-md text-on-surface-variant block">번역 엔진</label>
+                <div class="grid grid-cols-4 gap-3">
+                    <label class="flex flex-col items-center gap-2 p-3 rounded-lg border border-outline-variant/15 bg-surface-container hover:bg-surface-variant transition-all cursor-pointer has-[:checked]:border-primary has-[:checked]:bg-primary/5">
+                        <input checked name="engine" type="radio" value="local" class="hidden"/>
+                        <span class="material-symbols-outlined text-primary">memory</span>
+                        <span class="label-md text-on-surface">Local</span>
+                    </label>
+                    <label class="flex flex-col items-center gap-2 p-3 rounded-lg border border-outline-variant/15 bg-surface-container hover:bg-surface-variant transition-all cursor-pointer has-[:checked]:border-primary has-[:checked]:bg-primary/5">
+                        <input name="engine" type="radio" value="openai" class="hidden"/>
+                        <span class="material-symbols-outlined text-primary">smart_toy</span>
+                        <span class="label-md text-on-surface">OpenAI</span>
+                    </label>
+                    <label class="flex flex-col items-center gap-2 p-3 rounded-lg border border-outline-variant/15 bg-surface-container hover:bg-surface-variant transition-all cursor-pointer has-[:checked]:border-primary has-[:checked]:bg-primary/5">
+                        <input name="engine" type="radio" value="claude" class="hidden"/>
+                        <span class="material-symbols-outlined text-primary">auto_awesome</span>
+                        <span class="label-md text-on-surface">Claude</span>
+                    </label>
+                    <label class="flex flex-col items-center gap-2 p-3 rounded-lg border border-outline-variant/15 bg-surface-container hover:bg-surface-variant transition-all cursor-pointer has-[:checked]:border-primary has-[:checked]:bg-primary/5">
+                        <input name="engine" type="radio" value="gemini" class="hidden"/>
+                        <span class="material-symbols-outlined text-primary">diamond</span>
+                        <span class="label-md text-on-surface">Gemini</span>
+                    </label>
+                </div>
+            </div>
+
+            <!-- Inputs -->
+            <div class="space-y-5">
+                <!-- API Key -->
+                <div id="api-key-section" class="space-y-2 hidden">
+                    <label class="label-md text-on-surface-variant block">API Key</label>
+                    <input id="api-key-input" class="w-full bg-surface-container-lowest border border-outline-variant/30 rounded-lg px-4 py-3 focus:ring-1 focus:ring-primary focus:border-primary transition-all text-on-surface" placeholder="sk-..." type="password"/>
+                </div>
+
+                <!-- Endpoint -->
+                <div class="space-y-2">
+                    <label class="label-md text-on-surface-variant block">엔드포인트 (선택)</label>
+                    <input id="endpoint-input" class="w-full bg-surface-container-lowest border border-outline-variant/30 rounded-lg px-4 py-3 focus:ring-1 focus:ring-primary focus:border-primary transition-all text-on-surface" placeholder="http://localhost:8080/v1" type="text"/>
+                </div>
+
+                <!-- Model -->
+                <div class="space-y-2">
+                    <label class="label-md text-on-surface-variant block">모델 (빈칸 = 기본값)</label>
+                    <input id="model-input" class="w-full bg-surface-container-lowest border border-outline-variant/30 rounded-lg px-4 py-3 focus:ring-1 focus:ring-primary focus:border-primary transition-all text-on-surface" placeholder="프로바이더별 기본 모델 사용" type="text"/>
+                </div>
+
+                <!-- Chunk Size Slider -->
+                <div class="space-y-2">
+                    <div class="flex justify-between items-center">
+                        <label class="label-md text-on-surface-variant">청크 크기 (Chunk Size)</label>
+                        <span id="chunk-value" class="label-md text-primary font-bold">800 words</span>
+                    </div>
+                    <input id="chunk-slider" class="w-full h-1.5 bg-surface-variant rounded-lg appearance-none cursor-pointer accent-primary" type="range" min="200" max="2000" step="100" value="800"/>
+                </div>
+
+                <!-- Resume Checkbox -->
+                <div class="flex items-center gap-3 py-2">
+                    <input class="w-5 h-5 rounded border-outline-variant bg-surface-container-lowest text-primary focus:ring-offset-surface" id="resume-check" type="checkbox"/>
+                    <label class="title-md font-medium text-on-surface select-none" for="resume-check">중단된 지점부터 재개 (Resume)</label>
+                </div>
+            </div>
+
+            <!-- Translate Button -->
+            <button id="translate-btn" class="w-full btn-primary-gradient text-on-primary-container font-bold py-4 rounded-xl shadow-lg shadow-primary/20 hover:scale-[1.02] active:scale-95 transition-all duration-300 flex items-center justify-center gap-2">
+                <span class="material-symbols-outlined">translate</span>
+                번역 시작
+            </button>
+        </div>
+    </aside>
+
+    <!-- Right Panel: Status/Results -->
+    <div class="lg:col-span-8 space-y-6">
+
+        <!-- Progress Card -->
+        <div class="glass-panel rounded-xl p-8 border border-outline-variant/15 relative overflow-hidden">
+            <div class="flex flex-col md:flex-row items-center gap-8">
+                <!-- Progress Circle -->
+                <div class="relative w-32 h-32 flex items-center justify-center">
+                    <svg class="w-full h-full transform -rotate-90" viewBox="0 0 128 128">
+                        <circle class="text-surface-variant" cx="64" cy="64" fill="transparent" r="58" stroke="currentColor" stroke-width="8"></circle>
+                        <circle id="progress-circle" class="text-primary" cx="64" cy="64" fill="transparent" r="58" stroke="currentColor" stroke-dasharray="364.42" stroke-dashoffset="364.42" stroke-width="8" stroke-linecap="round"></circle>
+                    </svg>
+                    <div class="absolute inset-0 flex flex-col items-center justify-center">
+                        <span id="progress-text" class="text-3xl font-extrabold text-on-surface">0%</span>
+                        <span class="text-[10px] text-on-surface-variant uppercase tracking-widest">Done</span>
+                    </div>
+                </div>
+                <div class="flex-1 space-y-4">
+                    <div>
+                        <h3 id="book-title" class="text-2xl font-bold text-on-surface">대기 중</h3>
+                        <p id="progress-detail" class="label-md text-on-surface-variant mt-1">EPUB 파일을 업로드하여 번역을 시작하세요</p>
+                    </div>
+                    <div class="flex flex-wrap gap-3">
+                        <button id="download-btn" class="hidden px-6 py-2.5 btn-primary-gradient rounded-lg text-on-primary-container font-bold title-md flex items-center gap-2 transition-transform hover:scale-105">
+                            <span class="material-symbols-outlined">download</span>
+                            결과 다운로드
+                        </button>
+                        <button id="cancel-btn" class="hidden px-6 py-2.5 bg-surface-container-highest border border-outline-variant/30 rounded-lg text-primary font-bold title-md flex items-center gap-2 hover:bg-surface-variant transition-colors">
+                            <span class="material-symbols-outlined">stop</span>
+                            번역 중단
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <!-- Status Logs -->
+            <div class="glass-panel rounded-xl flex flex-col border border-outline-variant/15 min-h-[400px]">
+                <div class="p-4 border-b border-outline-variant/10 flex justify-between items-center">
+                    <h4 class="title-md font-bold text-on-surface">실시간 상태 로그</h4>
+                    <span class="material-symbols-outlined text-outline">list_alt</span>
+                </div>
+                <div id="log-container" class="p-4 space-y-3 overflow-y-auto custom-scrollbar flex-1 max-h-[350px]">
+                    <!-- 로그 엔트리가 여기 삽입됨 -->
+                </div>
+            </div>
+
+            <!-- Recent Checkpoints -->
+            <div class="space-y-4">
+                <h4 class="title-md font-bold text-on-surface px-1">최근 작업 체크포인트</h4>
+                <div id="checkpoint-list" class="space-y-3">
+                    <!-- 체크포인트 카드가 여기 삽입됨 -->
+                </div>
+            </div>
+        </div>
+    </div>
+
+</main>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

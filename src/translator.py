@@ -1,29 +1,105 @@
-"""번역 모듈 — MLX-LM API 호출 + 재시도 로직."""
+"""번역 모듈 — LLM API 호출 + 재시도 로직."""
 
 import logging
 import re
 import time
 
-from openai import OpenAI
-
 from src.chunker import Chunk
+from src.providers import LLMClient
 
 logger = logging.getLogger(__name__)
 
-SYSTEM_PROMPT = """You are a professional English-to-Korean book translator.
-
-Rules:
+# 기본 규칙 (모든 문체 공통)
+_BASE_RULES = """Rules:
 1. Translate accurately while maintaining natural Korean flow
-2. Preserve all HTML tags exactly as they appear (<b>, <i>, <a>, etc.)
+2. Preserve all HTML tags exactly as they appear (<b>, <i>, <a>, etc.) — never add, remove, or modify tags
 3. Keep proper nouns (person names, place names) in their original English form
 4. Maintain the same number of paragraphs as the input — use blank lines between paragraphs
-5. Output ONLY the Korean translation — no explanations, notes, or commentary
-6. For technical terms, use the common Korean translation with the original in parentheses on first occurrence"""
+5. Output ONLY the Korean translation — no explanations, notes, commentary, or preamble like "Here is the translation:"
+6. For technical terms, use the common Korean translation with the original in parentheses on first occurrence
+7. Never leave entire sentences untranslated — if unsure, translate to the best approximation
+8. Do not merge or split paragraphs — input has N paragraphs, output must have exactly N paragraphs
+9. Translate idioms and expressions to natural Korean equivalents, not word-for-word"""
 
-USER_PROMPT_TEMPLATE = """/no_think
+# 문체 프리셋
+STYLE_PRESETS: dict[str, dict[str, str]] = {
+    "default": {
+        "name": "기본",
+        "persona": "You are a professional English-to-Korean book translator.",
+        "style": "",
+    },
+    "novel": {
+        "name": "소설/문학",
+        "persona": "You are a literary translator specializing in fiction and novels.",
+        "style": (
+            "7. Use literary, expressive Korean — convey emotions, atmosphere, and imagery vividly\n"
+            "8. Vary sentence length and rhythm for dramatic effect\n"
+            "9. Translate dialogue naturally as spoken Korean, reflecting character voice"
+        ),
+    },
+    "science": {
+        "name": "과학/논문",
+        "persona": "You are a scientific translator specializing in academic and technical texts.",
+        "style": (
+            "7. Use precise, concise language — prioritize accuracy over style\n"
+            "8. Keep all technical terms, units, formulas, and citations intact\n"
+            "9. Use formal academic Korean (합니다체)"
+        ),
+    },
+    "philosophy": {
+        "name": "철학/인문",
+        "persona": "You are a humanities translator specializing in philosophy and critical thought.",
+        "style": (
+            "7. Preserve the depth and nuance of abstract concepts\n"
+            "8. Use contemplative, measured Korean — maintain the author's intellectual tone\n"
+            "9. Translate key philosophical terms consistently throughout"
+        ),
+    },
+    "business": {
+        "name": "비즈니스",
+        "persona": "You are a business translator specializing in corporate and management texts.",
+        "style": (
+            "7. Use clear, professional Korean — direct and actionable\n"
+            "8. Keep business jargon with Korean equivalents (ROI → 투자수익률(ROI))\n"
+            "9. Maintain a confident, authoritative tone"
+        ),
+    },
+    "youth": {
+        "name": "아동/청소년",
+        "persona": "You are a translator specializing in children's and young adult literature.",
+        "style": (
+            "7. Use simple, friendly Korean that young readers can easily understand\n"
+            "8. Avoid complex sentence structures — prefer short, clear sentences\n"
+            "9. Make descriptions fun and engaging"
+        ),
+    },
+    "essay": {
+        "name": "에세이",
+        "persona": "You are a translator specializing in personal essays and creative nonfiction.",
+        "style": (
+            "7. Use warm, conversational Korean — as if speaking to a friend\n"
+            "8. Preserve the author's personal voice and humor\n"
+            "9. Keep the relaxed, reflective tone of the original"
+        ),
+    },
+}
 
-{context_block}Translate the following English text to Korean.
-Each paragraph is separated by a blank line. Preserve the same paragraph structure.
+
+def get_system_prompt(style: str = "default") -> str:
+    """문체 프리셋에 따른 시스템 프롬프트를 생성한다."""
+    preset = STYLE_PRESETS.get(style, STYLE_PRESETS["default"])
+    parts = [preset["persona"], "", _BASE_RULES]
+    if preset["style"]:
+        parts.append(preset["style"])
+    return "\n".join(parts)
+
+
+# 하위 호환용
+SYSTEM_PROMPT = get_system_prompt("default")
+
+USER_PROMPT_TEMPLATE = """{context_block}Translate the following English text to Korean.
+Each paragraph is separated by a blank line. Preserve the exact same paragraph count and structure.
+Do NOT add any prefix like "Here is the translation" — start directly with the Korean text.
 
 [TEXT]
 {chunk_text}
@@ -46,18 +122,19 @@ class TranslationError(Exception):
 
 def translate_chunk(
     chunk: Chunk,
-    client: OpenAI,
-    model: str = "mlx-community/Qwen3.5-35B-A3B-4bit",
+    client: LLMClient,
+    model: str,
     temperature: float = 0.1,
     top_p: float = 0.3,
-    max_tokens: int = 4096,
+    max_tokens: int = 16384,
     max_retries: int = 3,
+    style: str = "default",
 ) -> str:
     """
-    하나의 Chunk를 MLX-LM API로 번역한다.
+    하나의 Chunk를 LLM API로 번역한다.
 
-    1. 프롬프트 조립
-    2. OpenAI 호환 API 호출
+    1. 프롬프트 조립 (프로바이더별 템플릿 선택)
+    2. LLMClient.complete() 호출
     3. 실패 시 exponential backoff 재시도
     4. 빈 응답 시 1회 재시도
     5. max_retries 초과 시 TranslationError 발생
@@ -67,7 +144,6 @@ def translate_chunk(
     Raises:
         TranslationError: 모든 재시도 실패 시
     """
-    # 프롬프트 조립
     context_block = ""
     if chunk.context:
         context_block = CONTEXT_BLOCK_TEMPLATE.format(context=chunk.context)
@@ -78,7 +154,7 @@ def translate_chunk(
     )
 
     messages = [
-        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "system", "content": get_system_prompt(style)},
         {"role": "user", "content": user_message},
     ]
 
@@ -86,33 +162,39 @@ def translate_chunk(
 
     for attempt in range(max_retries):
         try:
-            response = client.chat.completions.create(
-                model=model,
+            result_obj = client.complete(
                 messages=messages,
+                model=model,
                 max_tokens=max_tokens,
                 temperature=temperature,
                 top_p=top_p,
-                stream=False,
             )
 
-            result = response.choices[0].message.content
+            # 응답 잘림 → max_tokens 늘려서 재시도
+            if result_obj.finish_reason == "length":
+                if max_tokens < 65536:
+                    new_max = min(max_tokens * 2, 65536)
+                    logger.warning("Chunk %s 응답 잘림 — max_tokens %d→%d로 재시도",
+                                   chunk.id, max_tokens, new_max)
+                    max_tokens = new_max
+                    continue
+                else:
+                    logger.warning("Chunk %s 응답 잘림 (max_tokens=%d, 더 이상 증가 불가)",
+                                   chunk.id, max_tokens)
 
-            # 응답 잘림 확인
-            if response.choices[0].finish_reason == "length":
-                logger.warning("WARNING: Chunk %s response truncated (finish_reason=length)",
-                               chunk.id)
+            result = result_obj.content or ""
+
+            # <think> 태그 제거 먼저 (MLX-LM Qwen은 thinking 토큰이 content에 섞일 수 있음)
+            result = re.sub(r'<think>.*?</think>', '', result, flags=re.DOTALL).strip()
 
             # 빈 응답 처리
-            if not result or not result.strip():
+            if not result:
                 if attempt < max_retries - 1:
                     logger.warning("빈 응답 — 재시도 %d/%d: %s",
                                    attempt + 1, max_retries, chunk.id)
                     time.sleep(2 ** attempt)
                     continue
                 raise TranslationError(chunk.id, "빈 응답 반복", attempt + 1)
-
-            # <think> 태그 제거 (/no_think 실패 방어)
-            result = re.sub(r'<think>.*?</think>', '', result, flags=re.DOTALL).strip()
 
             logger.debug("번역 완료: %s (attempt %d)", chunk.id, attempt + 1)
             return result
