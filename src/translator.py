@@ -9,29 +9,97 @@ from src.providers import LLMClient
 
 logger = logging.getLogger(__name__)
 
-SYSTEM_PROMPT = """You are a professional English-to-Korean book translator.
-
-Rules:
+# 기본 규칙 (모든 문체 공통)
+_BASE_RULES = """Rules:
 1. Translate accurately while maintaining natural Korean flow
-2. Preserve all HTML tags exactly as they appear (<b>, <i>, <a>, etc.)
+2. Preserve all HTML tags exactly as they appear (<b>, <i>, <a>, etc.) — never add, remove, or modify tags
 3. Keep proper nouns (person names, place names) in their original English form
 4. Maintain the same number of paragraphs as the input — use blank lines between paragraphs
-5. Output ONLY the Korean translation — no explanations, notes, or commentary
-6. For technical terms, use the common Korean translation with the original in parentheses on first occurrence"""
+5. Output ONLY the Korean translation — no explanations, notes, commentary, or preamble like "Here is the translation:"
+6. For technical terms, use the common Korean translation with the original in parentheses on first occurrence
+7. Never leave entire sentences untranslated — if unsure, translate to the best approximation
+8. Do not merge or split paragraphs — input has N paragraphs, output must have exactly N paragraphs
+9. Translate idioms and expressions to natural Korean equivalents, not word-for-word"""
 
-# Local Qwen 전용: thinking 모드 비활성화
-USER_PROMPT_TEMPLATE_LOCAL = """/no_think
+# 문체 프리셋
+STYLE_PRESETS: dict[str, dict[str, str]] = {
+    "default": {
+        "name": "기본",
+        "persona": "You are a professional English-to-Korean book translator.",
+        "style": "",
+    },
+    "novel": {
+        "name": "소설/문학",
+        "persona": "You are a literary translator specializing in fiction and novels.",
+        "style": (
+            "7. Use literary, expressive Korean — convey emotions, atmosphere, and imagery vividly\n"
+            "8. Vary sentence length and rhythm for dramatic effect\n"
+            "9. Translate dialogue naturally as spoken Korean, reflecting character voice"
+        ),
+    },
+    "science": {
+        "name": "과학/논문",
+        "persona": "You are a scientific translator specializing in academic and technical texts.",
+        "style": (
+            "7. Use precise, concise language — prioritize accuracy over style\n"
+            "8. Keep all technical terms, units, formulas, and citations intact\n"
+            "9. Use formal academic Korean (합니다체)"
+        ),
+    },
+    "philosophy": {
+        "name": "철학/인문",
+        "persona": "You are a humanities translator specializing in philosophy and critical thought.",
+        "style": (
+            "7. Preserve the depth and nuance of abstract concepts\n"
+            "8. Use contemplative, measured Korean — maintain the author's intellectual tone\n"
+            "9. Translate key philosophical terms consistently throughout"
+        ),
+    },
+    "business": {
+        "name": "비즈니스",
+        "persona": "You are a business translator specializing in corporate and management texts.",
+        "style": (
+            "7. Use clear, professional Korean — direct and actionable\n"
+            "8. Keep business jargon with Korean equivalents (ROI → 투자수익률(ROI))\n"
+            "9. Maintain a confident, authoritative tone"
+        ),
+    },
+    "youth": {
+        "name": "아동/청소년",
+        "persona": "You are a translator specializing in children's and young adult literature.",
+        "style": (
+            "7. Use simple, friendly Korean that young readers can easily understand\n"
+            "8. Avoid complex sentence structures — prefer short, clear sentences\n"
+            "9. Make descriptions fun and engaging"
+        ),
+    },
+    "essay": {
+        "name": "에세이",
+        "persona": "You are a translator specializing in personal essays and creative nonfiction.",
+        "style": (
+            "7. Use warm, conversational Korean — as if speaking to a friend\n"
+            "8. Preserve the author's personal voice and humor\n"
+            "9. Keep the relaxed, reflective tone of the original"
+        ),
+    },
+}
 
-{context_block}Translate the following English text to Korean.
-Each paragraph is separated by a blank line. Preserve the same paragraph structure.
 
-[TEXT]
-{chunk_text}
-[/TEXT]"""
+def get_system_prompt(style: str = "default") -> str:
+    """문체 프리셋에 따른 시스템 프롬프트를 생성한다."""
+    preset = STYLE_PRESETS.get(style, STYLE_PRESETS["default"])
+    parts = [preset["persona"], "", _BASE_RULES]
+    if preset["style"]:
+        parts.append(preset["style"])
+    return "\n".join(parts)
 
-# OpenAI / Claude 용
-USER_PROMPT_TEMPLATE_CLOUD = """{context_block}Translate the following English text to Korean.
-Each paragraph is separated by a blank line. Preserve the same paragraph structure.
+
+# 하위 호환용
+SYSTEM_PROMPT = get_system_prompt("default")
+
+USER_PROMPT_TEMPLATE = """{context_block}Translate the following English text to Korean.
+Each paragraph is separated by a blank line. Preserve the exact same paragraph count and structure.
+Do NOT add any prefix like "Here is the translation" — start directly with the Korean text.
 
 [TEXT]
 {chunk_text}
@@ -60,6 +128,7 @@ def translate_chunk(
     top_p: float = 0.3,
     max_tokens: int = 16384,
     max_retries: int = 3,
+    style: str = "default",
 ) -> str:
     """
     하나의 Chunk를 LLM API로 번역한다.
@@ -79,19 +148,13 @@ def translate_chunk(
     if chunk.context:
         context_block = CONTEXT_BLOCK_TEMPLATE.format(context=chunk.context)
 
-    # 프로바이더별 프롬프트 템플릿 선택
-    template = (
-        USER_PROMPT_TEMPLATE_LOCAL
-        if client.provider == "local"
-        else USER_PROMPT_TEMPLATE_CLOUD
-    )
-    user_message = template.format(
+    user_message = USER_PROMPT_TEMPLATE.format(
         context_block=context_block,
         chunk_text=chunk.text,
     )
 
     messages = [
-        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "system", "content": get_system_prompt(style)},
         {"role": "user", "content": user_message},
     ]
 
@@ -107,10 +170,17 @@ def translate_chunk(
                 top_p=top_p,
             )
 
-            # 응답 잘림 확인
+            # 응답 잘림 → max_tokens 늘려서 재시도
             if result_obj.finish_reason == "length":
-                logger.warning("WARNING: Chunk %s response truncated (finish_reason=length)",
-                               chunk.id)
+                if max_tokens < 65536:
+                    new_max = min(max_tokens * 2, 65536)
+                    logger.warning("Chunk %s 응답 잘림 — max_tokens %d→%d로 재시도",
+                                   chunk.id, max_tokens, new_max)
+                    max_tokens = new_max
+                    continue
+                else:
+                    logger.warning("Chunk %s 응답 잘림 (max_tokens=%d, 더 이상 증가 불가)",
+                                   chunk.id, max_tokens)
 
             result = result_obj.content or ""
 
