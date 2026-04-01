@@ -1,12 +1,11 @@
-"""번역 모듈 — MLX-LM API 호출 + 재시도 로직."""
+"""번역 모듈 — LLM API 호출 + 재시도 로직."""
 
 import logging
 import re
 import time
 
-from openai import OpenAI
-
 from src.chunker import Chunk
+from src.providers import LLMClient
 
 logger = logging.getLogger(__name__)
 
@@ -20,9 +19,18 @@ Rules:
 5. Output ONLY the Korean translation — no explanations, notes, or commentary
 6. For technical terms, use the common Korean translation with the original in parentheses on first occurrence"""
 
-USER_PROMPT_TEMPLATE = """/no_think
+# Local Qwen 전용: thinking 모드 비활성화
+USER_PROMPT_TEMPLATE_LOCAL = """/no_think
 
 {context_block}Translate the following English text to Korean.
+Each paragraph is separated by a blank line. Preserve the same paragraph structure.
+
+[TEXT]
+{chunk_text}
+[/TEXT]"""
+
+# OpenAI / Claude 용
+USER_PROMPT_TEMPLATE_CLOUD = """{context_block}Translate the following English text to Korean.
 Each paragraph is separated by a blank line. Preserve the same paragraph structure.
 
 [TEXT]
@@ -46,18 +54,18 @@ class TranslationError(Exception):
 
 def translate_chunk(
     chunk: Chunk,
-    client: OpenAI,
-    model: str = "mlx-community/Qwen3.5-35B-A3B-4bit",
+    client: LLMClient,
+    model: str,
     temperature: float = 0.1,
     top_p: float = 0.3,
-    max_tokens: int = 4096,
+    max_tokens: int = 16384,
     max_retries: int = 3,
 ) -> str:
     """
-    하나의 Chunk를 MLX-LM API로 번역한다.
+    하나의 Chunk를 LLM API로 번역한다.
 
-    1. 프롬프트 조립
-    2. OpenAI 호환 API 호출
+    1. 프롬프트 조립 (프로바이더별 템플릿 선택)
+    2. LLMClient.complete() 호출
     3. 실패 시 exponential backoff 재시도
     4. 빈 응답 시 1회 재시도
     5. max_retries 초과 시 TranslationError 발생
@@ -67,12 +75,17 @@ def translate_chunk(
     Raises:
         TranslationError: 모든 재시도 실패 시
     """
-    # 프롬프트 조립
     context_block = ""
     if chunk.context:
         context_block = CONTEXT_BLOCK_TEMPLATE.format(context=chunk.context)
 
-    user_message = USER_PROMPT_TEMPLATE.format(
+    # 프로바이더별 프롬프트 템플릿 선택
+    template = (
+        USER_PROMPT_TEMPLATE_LOCAL
+        if client.provider == "local"
+        else USER_PROMPT_TEMPLATE_CLOUD
+    )
+    user_message = template.format(
         context_block=context_block,
         chunk_text=chunk.text,
     )
@@ -86,33 +99,32 @@ def translate_chunk(
 
     for attempt in range(max_retries):
         try:
-            response = client.chat.completions.create(
-                model=model,
+            result_obj = client.complete(
                 messages=messages,
+                model=model,
                 max_tokens=max_tokens,
                 temperature=temperature,
                 top_p=top_p,
-                stream=False,
             )
 
-            result = response.choices[0].message.content
-
             # 응답 잘림 확인
-            if response.choices[0].finish_reason == "length":
+            if result_obj.finish_reason == "length":
                 logger.warning("WARNING: Chunk %s response truncated (finish_reason=length)",
                                chunk.id)
 
+            result = result_obj.content or ""
+
+            # <think> 태그 제거 먼저 (MLX-LM Qwen은 thinking 토큰이 content에 섞일 수 있음)
+            result = re.sub(r'<think>.*?</think>', '', result, flags=re.DOTALL).strip()
+
             # 빈 응답 처리
-            if not result or not result.strip():
+            if not result:
                 if attempt < max_retries - 1:
                     logger.warning("빈 응답 — 재시도 %d/%d: %s",
                                    attempt + 1, max_retries, chunk.id)
                     time.sleep(2 ** attempt)
                     continue
                 raise TranslationError(chunk.id, "빈 응답 반복", attempt + 1)
-
-            # <think> 태그 제거 (/no_think 실패 방어)
-            result = re.sub(r'<think>.*?</think>', '', result, flags=re.DOTALL).strip()
 
             logger.debug("번역 완료: %s (attempt %d)", chunk.id, attempt + 1)
             return result

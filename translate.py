@@ -13,7 +13,7 @@ from tqdm import tqdm
 
 from src.epub_parser import parse_epub
 from src.chunker import chunk_chapter
-from openai import OpenAI
+from src.providers import LLMClient, DEFAULT_MODELS
 from src.translator import translate_chunk, TranslationError
 from src.checkpoint import save_progress, load_progress
 from src.epub_builder import build_epub
@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 
 def _check_server(endpoint: str) -> bool:
-    """MLX-LM 서버 연결을 확인한다."""
+    """MLX-LM 로컬 서버 연결을 확인한다."""
     import httpx
     try:
         resp = httpx.get(f"{endpoint}/models", timeout=5.0)
@@ -108,7 +108,7 @@ def run_pipeline(
     checkpoint_path: str,
     resume: bool,
     max_words: int,
-    endpoint: str = "http://localhost:8080/v1",
+    client: LLMClient,
 ) -> None:
     """
     번역 파이프라인 메인 루프.
@@ -192,7 +192,6 @@ def run_pipeline(
             )
 
     # 4. 번역 루프
-    client = OpenAI(base_url=endpoint, api_key="not-needed")
     completed = checkpoint_data.get("completed_chunks", 0)
     failed = checkpoint_data.get("failed_chunks", 0)
 
@@ -282,9 +281,20 @@ def main():
     parser.add_argument("input", help="입력 EPUB 파일 경로")
     parser.add_argument("--output", help="출력 EPUB 경로 (기본: input_kr.epub)")
     parser.add_argument(
+        "--provider",
+        choices=["local", "openai", "claude"],
+        default="local",
+        help="번역 엔진 선택: local(MLX-LM), openai, claude (기본: local)",
+    )
+    parser.add_argument(
         "--model",
-        default="mlx-community/Qwen3.5-35B-A3B-4bit",
-        help="MLX-LM 모델 이름 (기본: mlx-community/Qwen3.5-35B-A3B-4bit)",
+        default=None,
+        help="모델 이름 (기본: 프로바이더별 자동 선택)",
+    )
+    parser.add_argument(
+        "--api-key",
+        default=None,
+        help="API 키 (미입력 시 OPENAI_API_KEY / ANTHROPIC_API_KEY 환경변수 사용)",
     )
     parser.add_argument("--checkpoint", help="체크포인트 파일 경로")
     parser.add_argument("--resume", action="store_true", help="기존 체크포인트에서 이어하기")
@@ -296,8 +306,8 @@ def main():
     )
     parser.add_argument(
         "--endpoint",
-        default="http://localhost:8080/v1",
-        help="MLX-LM 서버 엔드포인트 (기본: http://localhost:8080/v1)",
+        default=None,
+        help="로컬 서버 엔드포인트 (기본: http://localhost:8080/v1, --provider=local 전용)",
     )
 
     args = parser.parse_args()
@@ -320,35 +330,42 @@ def main():
         sys.exit(1)
 
     # 출력 경로
-    if args.output:
-        output_path = args.output
-    else:
-        output_path = str(input_path.with_stem(f"{input_path.stem}_kr"))
+    output_path = args.output or str(input_path.with_stem(f"{input_path.stem}_kr"))
 
     # 체크포인트 경로
-    if args.checkpoint:
-        checkpoint_path = args.checkpoint
-    else:
-        checkpoint_path = f"checkpoints/{input_path.stem}_progress.json"
+    checkpoint_path = args.checkpoint or f"checkpoints/{input_path.stem}_progress.json"
 
-    # 서버 연결 확인
-    endpoint = args.endpoint
-    if not _check_server(endpoint):
+    # 모델 기본값
+    model = args.model or DEFAULT_MODELS[args.provider]
+
+    # LLM 클라이언트 생성
+    endpoint = args.endpoint or ("http://localhost:8080/v1" if args.provider == "local" else None)
+    try:
+        client = LLMClient(provider=args.provider, api_key=args.api_key, endpoint=endpoint)
+    except Exception as e:
+        logger.error("클라이언트 초기화 실패: %s", e)
+        sys.exit(1)
+
+    # 로컬 서버 연결 확인 (cloud 프로바이더는 스킵)
+    if args.provider == "local" and not client.check_connection():
         logger.error(
-            "ERROR: MLX-LM 서버에 연결할 수 없습니다.\n"
+            "ERROR: MLX-LM 서버에 연결할 수 없습니다 (%s)\n"
             "서버를 먼저 시작하세요: mlx_lm.server --model %s --port 8080",
-            args.model,
+            endpoint,
+            model,
         )
         sys.exit(1)
+
+    logger.info("프로바이더: %s / 모델: %s", args.provider, model)
 
     run_pipeline(
         input_path=str(input_path),
         output_path=output_path,
-        model=args.model,
+        model=model,
         checkpoint_path=checkpoint_path,
         resume=args.resume,
         max_words=args.max_words,
-        endpoint=endpoint,
+        client=client,
     )
 
 
